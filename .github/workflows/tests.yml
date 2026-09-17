@@ -1,0 +1,262 @@
+name: Tests, coverage & lint
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: quality-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REPO: ${{ github.repository }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      BASE_REF: ${{ github.event.pull_request.base.ref }}
+      COVERAGE_MIN: '85'
+      COMMENT_MARKER: '<!-- ci-tests-quality v1 -->'
+      DATABASE_URL: postgresql+asyncpg://app:app@127.0.0.1:5432/setka
+      RABBITMQ_URL: amqp://guest:guest@127.0.0.1:5672/
+      SETKA_API_BASE_URL: http://127.0.0.1:8001
+      UPLOADS_DIR: /tmp/uploads
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: app
+          POSTGRES_PASSWORD: app
+          POSTGRES_DB: setka
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U app"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      rabbitmq:
+        image: rabbitmq:3-management
+        ports: ['5672:5672', '15672:15672']
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+          if [ -f pyproject.toml ]; then pip install -e .; fi
+          mkdir -p "${UPLOADS_DIR}"
+
+      - name: Lint (ruff)
+        if: always()
+        id: lint
+        run: |
+          set +e
+          ruff check --output-format=concise . > ruff.txt 2>&1
+          check_code=$?
+          echo '--- ruff format --check ---' >> ruff.txt
+          ruff format --check . >> ruff.txt 2>&1
+          format_code=$?
+          cat ruff.txt
+          if [ "${check_code}" = "0" ] && [ "${format_code}" = "0" ]; then
+            echo "code=0" >> "$GITHUB_OUTPUT"
+          else
+            echo "code=1" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Review tooling tests (node)
+        if: always()
+        id: nodetests
+        run: |
+          set +e
+          node --test 'scripts/**/*.test.mjs' 2>&1 | tee node-tests.txt
+          echo "code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Discover Python tests
+        if: always()
+        id: discover
+        run: |
+          if [ -n "$(find tests -name 'test_*.py' -print -quit 2>/dev/null)" ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+          git fetch --no-tags origin "${BASE_REF}" >/dev/null 2>&1 || true
+          changed=$(git diff --name-only --diff-filter=ACMR "origin/${BASE_REF}...HEAD" \
+            | grep -E '^(src|mock_setka)/.*\.py$' || true)
+          [ -n "${changed}" ] && echo "changed_py=true" >> "$GITHUB_OUTPUT" || echo "changed_py=false" >> "$GITHUB_OUTPUT"
+
+      - name: Run tests with coverage
+        if: always() && steps.discover.outputs.found == 'true'
+        id: pytest
+        run: |
+          set +e
+          cov_args="--cov=src"
+          [ -d mock_setka ] && cov_args="${cov_args} --cov=mock_setka"
+          pytest ${cov_args} \
+            --cov-report=term-missing --cov-report=xml \
+            --junitxml=pytest-junit.xml 2>&1 | tee pytest-output.txt
+          echo "code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Total coverage (gate)
+        if: always()
+        id: coverage
+        run: |
+          if [ -f .coverage ]; then
+            total=$(coverage report --format=total 2>/dev/null || echo "n/a")
+          else
+            total="n/a"
+          fi
+          echo "total=${total}" >> "$GITHUB_OUTPUT"
+
+      - name: Patch coverage (changed code only, informational)
+        if: always()
+        id: diffcov
+        run: |
+          set +e
+          if [ ! -f coverage.xml ]; then
+            echo "patch=n/a" >> "$GITHUB_OUTPUT"
+            echo "coverage.xml отсутствует — расчёт покрытия изменённого кода пропущен" > diff-cover.txt
+            exit 0
+          fi
+          git fetch --no-tags origin "${BASE_REF}" >/dev/null 2>&1 || true
+          diff-cover coverage.xml \
+            --compare-branch="origin/${BASE_REF}" \
+            --markdown-report diff-cover.md 2>&1 | tee diff-cover.txt
+          patch=$(grep -oE 'Coverage: [0-9.]+%' diff-cover.txt | head -1 | grep -oE '[0-9.]+%')
+          [ -z "${patch}" ] && patch="n/a (нет изменённых строк Python)"
+          echo "patch=${patch}" >> "$GITHUB_OUTPUT"
+
+      - name: Build report
+        if: always()
+        env:
+          LINT_CODE: ${{ steps.lint.outputs.code }}
+          NODE_CODE: ${{ steps.nodetests.outputs.code }}
+          TEST_CODE: ${{ steps.pytest.outputs.code }}
+          HAS_TESTS: ${{ steps.discover.outputs.found }}
+          CHANGED_PY: ${{ steps.discover.outputs.changed_py }}
+          TOTAL: ${{ steps.coverage.outputs.total }}
+          PATCH: ${{ steps.diffcov.outputs.patch }}
+        run: |
+          status() { [ "$1" = "0" ] && echo '✅ passed' || echo '❌ failed'; }
+
+          if [ "${HAS_TESTS}" = "true" ]; then
+            tests_status="$(status "${TEST_CODE}")"
+          elif [ "${CHANGED_PY}" = "true" ]; then
+            tests_status='❌ тестов нет, а Python-код меняется (TDD: сначала тест)'
+          else
+            tests_status='⏭️ тестов пока нет (Python-код не менялся)'
+          fi
+
+          if [ "${TOTAL}" = "n/a" ]; then
+            coverage_line="**n/a** (тесты не запускались)"
+          elif [ "${TOTAL}" -lt "${COVERAGE_MIN}" ]; then
+            coverage_line="**${TOTAL}%** ❌ (порог ${COVERAGE_MIN}%, gate)"
+          else
+            coverage_line="**${TOTAL}%** ✅ (порог ${COVERAGE_MIN}%, gate)"
+          fi
+
+          {
+            echo "${COMMENT_MARKER}"
+            echo '## 🧪 Tests, coverage & lint'
+            echo ''
+            echo "- Тесты: **${tests_status}**"
+            echo "- 📊 Покрытие проекта: ${coverage_line}"
+            echo "- 🎯 Покрытие изменённого кода (vs \`${BASE_REF}\`): **${PATCH}** (информативно)"
+            echo "- 🧹 Линтер \`ruff\`: **$(status "${LINT_CODE}")**"
+            echo "- 🔧 Тесты скриптов авто-ревью: **$(status "${NODE_CODE}")**"
+            echo ''
+            echo '<details><summary>ruff</summary>'
+            echo ''
+            echo '```'
+            if [ -s ruff.txt ]; then tail -n 60 ruff.txt; else echo 'нет замечаний'; fi
+            echo '```'
+            echo '</details>'
+            echo ''
+            echo '<details><summary>pytest</summary>'
+            echo ''
+            echo '```'
+            if [ -s pytest-output.txt ]; then tail -n 60 pytest-output.txt; else echo 'тесты не запускались'; fi
+            echo '```'
+            echo '</details>'
+            echo ''
+            echo '<details><summary>Покрытие изменённого кода — по файлам</summary>'
+            echo ''
+            if [ -s diff-cover.md ]; then cat diff-cover.md; else echo '```'; cat diff-cover.txt 2>/dev/null || echo 'нет данных'; echo '```'; fi
+            echo '</details>'
+          } > report.md
+
+          cat report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tests-quality-reports
+          path: |
+            pytest-junit.xml
+            coverage.xml
+            pytest-output.txt
+            diff-cover.md
+            diff-cover.txt
+            ruff.txt
+            node-tests.txt
+          if-no-files-found: ignore
+
+      - name: Publish PR comment
+        if: always()
+        env:
+          BODY_FILE: report.md
+        run: node scripts/upsert-pr-comment.mjs
+
+      - name: Gate
+        if: always()
+        env:
+          LINT_CODE: ${{ steps.lint.outputs.code }}
+          NODE_CODE: ${{ steps.nodetests.outputs.code }}
+          TEST_CODE: ${{ steps.pytest.outputs.code }}
+          HAS_TESTS: ${{ steps.discover.outputs.found }}
+          CHANGED_PY: ${{ steps.discover.outputs.changed_py }}
+          TOTAL: ${{ steps.coverage.outputs.total }}
+        run: |
+          rc=0
+          if [ "${LINT_CODE}" != "0" ]; then echo "ruff нашёл проблемы"; rc=1; fi
+          if [ "${NODE_CODE}" != "0" ]; then echo "тесты скриптов авто-ревью упали"; rc=1; fi
+          if [ "${HAS_TESTS}" = "true" ]; then
+            if [ "${TEST_CODE}" != "0" ]; then echo "pytest упал (exit ${TEST_CODE})"; rc=1; fi
+            if [ "${TOTAL}" = "n/a" ] || [ "${TOTAL}" -lt "${COVERAGE_MIN}" ]; then
+              echo "покрытие ${TOTAL}% ниже порога ${COVERAGE_MIN}%"
+              rc=1
+            fi
+          elif [ "${CHANGED_PY}" = "true" ]; then
+            echo "Python-код изменён, но в tests/ нет ни одного test_*.py — TDD требует тест до кода"
+            rc=1
+          fi
+          exit "${rc}"
