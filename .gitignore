@@ -12,3 +12,7 @@ htmlcov/
 uploads/
 .idea/
 .DS_Store
+
+*.egg-info/
+build/
+dist/
