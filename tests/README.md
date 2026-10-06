@@ -10,7 +10,7 @@
 | `integration/` | репозитории, publisher/consumer — против настоящих postgres/rabbitmq | docker-compose локально, service containers в CI | `@pytest.mark.integration` |
 | `e2e/` | сквозной сценарий: кампания → start → воркер отправил → статусы/`sent_log` | весь compose + mock «Сетки» | появится с [#15](https://github.com/YanaKris/setka-bot-mass/issues/15) |
 
-`integration/conftest.py` сам скипает тесты, если не заданы настройки приложения (переменные окружения или файл `.env` в корне репозитория; создаётся копированием [.env.example](../.env.example)) или postgres недоступен (TCP-коннект на хост:порт из `DATABASE_URL`) — локально без compose `make test` остаётся зелёным, просто с пропусками; в CI и в поднятом compose эти же тесты реально выполняются.
+`integration/conftest.py` сам скипает тесты, если не заданы настройки приложения (переменные окружения или файл `.env` в корне репозитория; создаётся копированием [.env.example](../.env.example)) или postgres недоступен (TCP-коннект на хост:порт из `DATABASE_URL`) — локально без compose `make test` остаётся зелёным, просто с пропусками; в поднятом compose эти же тесты реально выполняются. В CI (переменная `CI` задана — GitHub Actions выставляет её сам) вместо пропуска тест **падает**: integration-набор не может молча уйти в skip при зелёной джобе. Поведение зафиксировано в [test_integration_conftest.py](unit/test_integration_conftest.py).
 
 ## Куда класть новый тест
 

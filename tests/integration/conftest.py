@@ -1,3 +1,4 @@
+import os
 import socket
 from urllib.parse import urlsplit
 
@@ -5,6 +6,17 @@ import pytest
 from pydantic import ValidationError
 
 from setka_sender.core.config import Settings
+
+
+def _skip_or_fail(reason: str) -> None:
+    """Локально без compose — skip; в CI (GitHub выставляет CI=true) — падение.
+
+    Иначе при сломанном service-контейнере integration-набор молча уйдёт в skip
+    при зелёной джобе.
+    """
+    if os.environ.get("CI"):
+        pytest.fail(f"{reason}; в CI integration-тесты обязаны выполняться", pytrace=False)
+    pytest.skip(f"{reason} — integration-тесты пропущены")
 
 
 def _postgres_reachable(database_url: str) -> bool:
@@ -22,7 +34,7 @@ def database_url() -> str:
     try:
         return Settings().database_url
     except ValidationError:
-        pytest.skip("настройки приложения не заданы (env / .env) — integration-тесты пропущены")
+        _skip_or_fail("настройки приложения не заданы (env / .env)")
 
 
 @pytest.fixture(scope="session")
@@ -33,4 +45,4 @@ def postgres_reachable(database_url) -> bool:
 @pytest.fixture(autouse=True)
 def _skip_without_postgres(postgres_reachable):
     if not postgres_reachable:
-        pytest.skip("postgres недоступен — integration-тесты пропущены")
+        _skip_or_fail("postgres недоступен")
