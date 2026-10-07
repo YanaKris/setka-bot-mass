@@ -1,0 +1,39 @@
+# Волна 0 (#4): минимальный compose — только api и setka-mock.
+# postgres, rabbitmq и worker появятся в волне 4 вместе с БД (#5) и очередью (#11).
+#
+# Оба сервиса собираются из одного образа (Dockerfile в корне) и отличаются только командой.
+
+x-app: &app
+  build: .
+  image: setka-sender
+
+services:
+  api:
+    <<: *app
+    # .env обязателен намеренно: без него compose падает с понятным «env file not found»,
+    # а не приложение — с pydantic-ошибкой валидации. Создать: cp .env.example .env
+    env_file: .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - uploads:/data/uploads
+    # В slim-образе нет curl, поэтому проверка через python. Готовит depends_on: service_healthy для волны 4.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # Код мока (mock_setka/) приходит в #6. До него сервис спрятан за профилем, чтобы
+  # `docker compose up -d` без аргументов не поднимал падающий контейнер.
+  # Явное имя в команде включает профиль само: docker compose up -d api setka-mock.
+  # В #6 профиль убрать.
+  setka-mock:
+    <<: *app
+    profiles: ["mock"]
+    command: uvicorn mock_setka.main:app --host 0.0.0.0 --port 8001
+    ports:
+      - "8001:8001"
+
+volumes:
+  uploads:
