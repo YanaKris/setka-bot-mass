@@ -12,6 +12,8 @@ dependencies = [
     "scalar-fastapi",
     "pydantic-settings",
     "httpx",
+    "sqlalchemy[asyncio]",
+    "asyncpg",
 ]
 
 [tool.setuptools.packages.find]

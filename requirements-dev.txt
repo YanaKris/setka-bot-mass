@@ -1,5 +1,6 @@
 pytest>=8.0
 pytest-asyncio>=0.23
 pytest-cov>=5.0
+respx>=0.20
 diff-cover>=9.0
 ruff>=0.6
