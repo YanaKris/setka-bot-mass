@@ -12,6 +12,42 @@
 - **[Issues](https://github.com/YanaKris/setka-bot-mass/issues)** — задачи с критериями приёмки.
 - **[CLAUDE.md](CLAUDE.md)** — стандарты разработки: TDD, SOLID, DRY, пороги покрытия, работа с ветками и PR.
 
+## Запуск
+
+Всё окружение поднимается через Docker Compose. Один образ (`Dockerfile`) обслуживает все python-процессы — `api`, `setka-mock`, позже `worker`; сервисы отличаются только командой.
+
+Перед первым запуском:
+
+```bash
+cp .env.example .env
+```
+
+### Минимальный режим — для разработки клиента «Сетки»
+
+Только `api` и `setka-mock`, без PostgreSQL и RabbitMQ. Этого достаточно для всего walking skeleton (T1 → T5 → T6 → T11):
+
+```bash
+docker compose up -d api setka-mock
+```
+
+Проверка: `curl localhost:8000/health` отвечает, Scalar UI — на [localhost:8000/docs](http://localhost:8000/docs), мок «Сетки» — на `localhost:8001`.
+
+Сервис `setka-mock` объявлен в compose, а его код (`mock_setka/`) приходит в задаче [#6](https://github.com/YanaKris/setka-bot-mass/issues/6). До неё поднимается только `api`:
+
+```bash
+docker compose up -d api
+```
+
+Остановить и удалить контейнеры (том `uploads` сохраняется):
+
+```bash
+docker compose down
+```
+
+### Полный режим
+
+`postgres:16`, `rabbitmq:3-management` и `worker` добавляются в волне 4 вместе с БД ([#5](https://github.com/YanaKris/setka-bot-mass/issues/5)) и очередью ([#11](https://github.com/YanaKris/setka-bot-mass/issues/11)). Тогда всё окружение поднимается одной командой `docker compose up -d`, management-панель RabbitMQ — на `localhost:15672`.
+
 ## Разработка
 
 ```bash
