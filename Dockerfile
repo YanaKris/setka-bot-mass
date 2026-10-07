@@ -7,15 +7,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_DISABLE_PIP_VERSION_CHECK=1
 
 WORKDIR /app
 
-# Сначала только зависимости из pyproject.toml — слой кешируется, пока они не меняются.
-COPY pyproject.toml ./
-RUN pip install --no-cache-dir $(python -c 'import tomllib; print(" ".join(tomllib.load(open("pyproject.toml", "rb"))["project"]["dependencies"]))')
-
-# Затем код: src/ (пакет setka_sender) и mock_setka/, когда появится. Исключения — в .dockerignore.
+# Код: src/ (пакет setka_sender) и mock_setka/, когда появится. Исключения — в .dockerignore.
+# Зависимости ставятся вместе с пакетом из pyproject.toml — один источник правды, без requirements.txt.
 COPY . .
-RUN pip install --no-cache-dir --no-deps .
+RUN pip install --no-cache-dir .
 
-RUN mkdir -p /data/uploads
+# Процессы идут не от root: сервис принимает PDF от пользователя и пишет их в /data/uploads.
+RUN useradd --system --uid 1000 app && mkdir -p /data/uploads && chown app /data/uploads
+USER app
 
 EXPOSE 8000
 CMD ["uvicorn", "setka_sender.api.main:app", "--host", "0.0.0.0", "--port", "8000"]

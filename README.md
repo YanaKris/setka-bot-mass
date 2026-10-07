@@ -32,11 +32,7 @@ docker compose up -d api setka-mock
 
 Проверка: `curl localhost:8000/health` отвечает, Scalar UI — на [localhost:8000/docs](http://localhost:8000/docs), мок «Сетки» — на `localhost:8001`.
 
-Сервис `setka-mock` объявлен в compose, а его код (`mock_setka/`) приходит в задаче [#6](https://github.com/YanaKris/setka-bot-mass/issues/6). До неё поднимается только `api`:
-
-```bash
-docker compose up -d api
-```
+Код мока (`mock_setka/`) приходит в задаче [#6](https://github.com/YanaKris/setka-bot-mass/issues/6). До неё сервис `setka-mock` спрятан за compose-профилем `mock`: `docker compose up -d` без аргументов поднимает только `api`, а явное имя `setka-mock` в команде включает профиль и запускает мок.
 
 Остановить и удалить контейнеры (том `uploads` сохраняется):
 
