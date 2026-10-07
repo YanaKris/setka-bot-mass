@@ -1,0 +1,5 @@
+# Файлы, которые читают Docker и shell: всегда LF, даже на Windows-чекауте с autocrlf.
+Dockerfile text eol=lf
+.dockerignore text eol=lf
+.env.example text eol=lf
+*.sh text eol=lf
