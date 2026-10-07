@@ -14,17 +14,11 @@
 
 ## Запуск
 
-Всё окружение поднимается через Docker Compose. Один образ (`Dockerfile`) обслуживает все python-процессы — `api`, `setka-mock`, позже `worker`; сервисы отличаются только командой.
-
 Перед первым запуском:
 
 ```bash
 cp .env.example .env
 ```
-
-### Минимальный режим — для разработки клиента «Сетки»
-
-Только `api` и `setka-mock`, без PostgreSQL и RabbitMQ. Этого достаточно для всего walking skeleton (T1 → T5 → T6 → T11):
 
 ```bash
 docker compose up -d api setka-mock
@@ -32,17 +26,11 @@ docker compose up -d api setka-mock
 
 Проверка: `curl localhost:8000/health` отвечает, Scalar UI — на [localhost:8000/docs](http://localhost:8000/docs), мок «Сетки» — на `localhost:8001`.
 
-Код мока (`mock_setka/`) приходит в задаче [#6](https://github.com/YanaKris/setka-bot-mass/issues/6). До неё сервис `setka-mock` спрятан за compose-профилем `mock`: `docker compose up -d` без аргументов поднимает только `api`, а явное имя `setka-mock` в команде включает профиль и запускает мок.
-
 Остановить и удалить контейнеры (том `uploads` сохраняется):
 
 ```bash
 docker compose down
 ```
-
-### Полный режим
-
-`postgres:16`, `rabbitmq:3-management` и `worker` добавляются в волне 4 вместе с БД ([#5](https://github.com/YanaKris/setka-bot-mass/issues/5)) и очередью ([#11](https://github.com/YanaKris/setka-bot-mass/issues/11)). Тогда всё окружение поднимается одной командой `docker compose up -d`, management-панель RabbitMQ — на `localhost:15672`.
 
 ## Разработка
 
@@ -56,9 +44,7 @@ make test-scripts  # тесты node-скриптов авто-ревью
 make check         # всё, что гоняет CI
 ```
 
-Конфигурация линтера — [ruff.toml](ruff.toml) (Python 3.12, длина строки 100, правила `E/F/W/I/N/UP/B/C90/ASYNC/S/RUF`, сложность ≤ 10).
-
-Одна задача = один issue = одна ветка = один PR. Ветку называем по номеру issue (`7-create-campaign`), в теле PR ставим `Closes #7` — см. [CLAUDE.md](CLAUDE.md).
+Конфигурация линтера — [ruff.toml](ruff.toml).
 
 ### CI
 
@@ -75,15 +61,7 @@ Gate (падает джоба): упавшие тесты, покрытие ни
 
 ### Авто-ревью
 
-`scripts/auto-review.mjs` запускает Claude Code CLI, кладёт результат одним комментарием в PR и обновляет его на каждый новый коммит: наверху — актуальный чек-лист для разработчика, под ним — история итераций (что починено, что осталось).
-
-Контекст задачи берётся из GitHub Issues. Номер issue ищется по порядку:
-
-1. в теле PR — `Closes #7` / `Fixes #7` / `Resolves #7`;
-2. в имени ветки — префикс `7-` (`7-create-campaign`, `feat/7-create-campaign`);
-3. в заголовке PR — `#7`.
-
-Найденный issue загружается через `gh` и попадает в промпт — ревью проверяет не только код, но и выполнение критериев приёмки. Если номер не найден, ревью идёт без контекста задачи. Стандарты разработки ревью берёт из [CLAUDE.md](CLAUDE.md).
+`scripts/auto-review.mjs` запускает Claude Code CLI, кладёт результат одним комментарием в PR и обновляет его на каждый новый коммит: наверху — актуальный чек-лист для разработчика, под ним — история итераций. Критерии приёмки ревью берёт из привязанного issue (правила привязки — в [CLAUDE.md](CLAUDE.md)), стандарты — из него же.
 
 Джоба идёт на self-hosted раннере с метками `self-hosted` и `claude-review`. Авторизация Claude живёт на самой машине раннера, секретов с ключами в репозитории не нужно, `GITHUB_TOKEN` выдаётся Actions автоматически.
 
